@@ -1,6 +1,6 @@
-package src;
+package framework;
 
-public class Application {
+public class Framework {
     public static void main(String[] args) {
         System.out.println("Hello from framework");
     }
