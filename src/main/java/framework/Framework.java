@@ -1,21 +1,21 @@
 package framework;
 
 import framework.annotations.Autowired;
+import framework.annotations.Qualifier;
 import framework.annotations.Service;
 import framework.exceptions.*;
 import org.apache.logging.log4j.util.Strings;
 import org.reflections.Reflections;
 
 import javax.annotation.Nullable;
-import java.lang.reflect.Constructor;
-import java.lang.reflect.Field;
-import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.*;
 import java.util.*;
 import java.util.stream.Collectors;
 
 public class Framework {
-    private static final Map<String, Object> SERVICE_SINGLETON_INSTANCES = new HashMap<>();
-    private static final Set<String> KNOWN_SERVICE_BEAN_IDENTIFIERS = new HashSet<>();
+    private static final Map<String, Object> INSTANCES_MAPPED_BY_NAME = new HashMap<>();
+    private static final Map<Class<?>, Set<Object>> INSTANCES_MAPPED_BY_TYPE = new HashMap<>();
+    private static final Set<Class<?>> ANNOTATED_SERVICE_CLASS_TYPES = new HashSet<>();
     private static final List<Object> SERVICE_OBJECT_LIST = new ArrayList<>();
 
     public Framework() {
@@ -54,15 +54,12 @@ public class Framework {
             4. after creating dependency beans, try creating parent bean and inject dependencies using the instance id from context
         */
 
-        for (Class<?> serviceClass : serviceTypes) {
-            String serviceClassId = getClassInstanceIdentifier(serviceClass);
-            if (!Framework.SERVICE_SINGLETON_INSTANCES.containsKey(getServiceBeanId(serviceClass))) {
-                continue;
-            }
+        for (Class<?> serviceClassType : serviceTypes) {
+            String serviceClassId = getClassInstanceIdentifier(serviceClassType);
 
-            Constructor<?> constructor = getPreferredConstructor(serviceClass);
+            Constructor<?> constructor = getPreferredConstructor(serviceClassType);
 
-            List<? extends Class<?>> paramClasses = validateParameterTypes(serviceClass,
+            List<? extends Class<?>> paramClasses = validateParameterTypes(serviceClassType,
                     constructor.getParameterTypes(), "constructor");
 
             if (!paramClasses.isEmpty()) {
@@ -71,12 +68,22 @@ public class Framework {
 
             // classes at this point have no-args constructors
             // OR their dependencies are already in the app context
-            Object instance = createOrGetServiceInstance(serviceClass, constructor, paramClasses);
+            Object instance = createOrGetServiceInstance(serviceClassType, constructor, paramClasses);
 
-            SERVICE_OBJECT_LIST.add(instance);
-            Framework.SERVICE_SINGLETON_INSTANCES.put(serviceClassId, instance);
+            updateApplicationContext(serviceClassType, instance, serviceClassId);
+
         }
+    }
 
+    private static void updateApplicationContext(Class<?> serviceClassType, Object instance, String serviceClassId) {
+        SERVICE_OBJECT_LIST.add(instance);
+        Framework.INSTANCES_MAPPED_BY_NAME.put(serviceClassId, instance);
+
+        if (Framework.INSTANCES_MAPPED_BY_TYPE.containsKey(serviceClassType)) {
+            Framework.INSTANCES_MAPPED_BY_TYPE.get(serviceClassType).add(instance);
+        } else {
+            Framework.INSTANCES_MAPPED_BY_TYPE.put(serviceClassType, Set.of(instance));
+        }
     }
 
     /**
@@ -92,10 +99,10 @@ public class Framework {
             throws InstanceCreationWrapperException {
         try {
             List<? extends Class<?>> paramClasses = Arrays.stream(parameters)
-                    .filter(Framework::isAManagedServiceBean).toList();
+                    .filter(Framework::isAManagedServiceClassType).toList();
 
             Set<? extends Class<?>> notSupportDependencies = Arrays.stream(parameters)
-                    .filter(type -> !isAManagedServiceBean(type)).collect(Collectors.toSet());
+                    .filter(type -> !isAManagedServiceClassType(type)).collect(Collectors.toSet());
 
             if (!notSupportDependencies.isEmpty()) {
                 throw new DependencyTypeNotSupportedOrFoundException(serviceClass, notSupportDependencies, paramType);
@@ -148,31 +155,39 @@ public class Framework {
      * This method should only be called once all dependencies are added to app context else
      * it will throw an InstanceNotFoundInAppContextException
      *
-     * @param serviceClass - class for which we're creating an instance
-     * @param paramTypes   - parameter classes that need to be injected
+     * @param serviceClassType - class for which we're creating an instance
+     * @param paramTypes       - parameter classes that need to be injected
      * @return newly created instance
      * @throws InstanceCreationWrapperException - a wrapper exception that helps keep the number of exceptions in the signature low
      */
-    private static Object createOrGetServiceInstance(Class<?> serviceClass,
+    private static Object createOrGetServiceInstance(Class<?> serviceClassType,
                                                      Constructor<?> constructor,
                                                      List<? extends Class<?>> paramTypes)
             throws InstanceCreationWrapperException {
 
-        String serviceId = Framework.getServiceBeanId(serviceClass);
-        if (instanceIsAvailableInContext(serviceId)) {
-            return Framework.SERVICE_SINGLETON_INSTANCES.get(serviceId);
+        String serviceId = Framework.getServiceInstanceId(serviceClassType);
+
+        //todo: need to add @Qualifier support for params of a constructor else will fail on multiple candidates
+        if (instanceIsAvailableInContextByType(serviceClassType)) {
+            return Framework.INSTANCES_MAPPED_BY_TYPE.get(serviceClassType);
         }
+
 
         if (paramTypes.isEmpty()) {
-            return createInstanceWithNoArgsConstructor(serviceClass);
+            return createInstanceWithNoArgsConstructor(serviceClassType);
         }
 
-        return createInstanceWithHasArgsConstructor(serviceClass, constructor, paramTypes);
+        return createInstanceWithHasArgsConstructor(serviceClassType, constructor, paramTypes);
     }
 
-    private static boolean instanceIsAvailableInContext(String serviceId) {
-        return Framework.SERVICE_SINGLETON_INSTANCES.containsKey(serviceId)
-                && Framework.SERVICE_SINGLETON_INSTANCES.get(serviceId) != null;
+    private static boolean instanceIsAvailableInContextByName(String serviceId) {
+        return Framework.INSTANCES_MAPPED_BY_NAME.containsKey(serviceId)
+                && Framework.INSTANCES_MAPPED_BY_NAME.get(serviceId) != null;
+    }
+
+    private static boolean instanceIsAvailableInContextByType(Class<?> serviceClassType) {
+        return Framework.INSTANCES_MAPPED_BY_TYPE.containsKey(serviceClassType)
+                && Framework.INSTANCES_MAPPED_BY_TYPE.get(serviceClassType) != null;
     }
 
     private static Object createInstanceWithHasArgsConstructor(Class<?> serviceClass, Constructor<?> constructor,
@@ -182,25 +197,33 @@ public class Framework {
             Object[] dependencies = new Object[paramTypes.size()];
 
             for (int i = 0; i < paramTypes.size(); i++) {
-                String instanceId = Framework.getServiceBeanId(paramTypes.get(i));
+                String instanceId = Framework.getServiceInstanceId(paramTypes.get(i));
 
-                if (!instanceIsAvailableInContext(instanceId))
-                    throw new InstanceNotFoundInAppContextException(paramTypes.get(i));
+                Object instance = getInstanceFromContextUsingType(paramTypes.get(i));
 
-                Object instance = Framework.SERVICE_SINGLETON_INSTANCES.get(instanceId);
 
-                if (paramTypes.get(i).isAssignableFrom(instance.getClass())) {
-                    dependencies[i] = instance;
+                if (!paramTypes.get(i).isAssignableFrom(instance.getClass())) {
                     throw new DependencyInstanceMismatchException(paramTypes.get(i), instance, serviceClass);
                 }
+
+                validateIsAssignable(paramTypes.get(i), instance, serviceClass);
+
+                dependencies[i] = instance;
             }
 
             return constructor.newInstance(dependencies);
 
         } catch (InstantiationException | InvocationTargetException |
                  IllegalAccessException | InstanceNotFoundInAppContextException |
-                 DependencyInstanceMismatchException e) {
+                 DependencyInstanceMismatchException | MultipleCandidatesForInstanceException e) {
             throw new InstanceCreationWrapperException(e.getMessage(), e);
+        }
+    }
+
+    private static void validateIsAssignable(Class<?> serviceClass, Object instance, Class<?> parentClass)
+            throws DependencyInstanceMismatchException {
+        if (!serviceClass.isAssignableFrom(instance.getClass())) {
+            throw new DependencyInstanceMismatchException(serviceClass, instance, parentClass);
         }
     }
 
@@ -221,26 +244,143 @@ public class Framework {
         return className;
     }
 
-    private static boolean isAManagedServiceBean(Class<?> type) {
-        return KNOWN_SERVICE_BEAN_IDENTIFIERS.contains(getServiceBeanId(type));
+    private static boolean isAManagedServiceClassType(Class<?> type) {
+        return ANNOTATED_SERVICE_CLASS_TYPES.contains(type);
     }
 
-    private static String getServiceBeanId(Class<?> clazz) {
-        String serviceIdentifier = clazz.getAnnotation(Service.class).value();
+    private static String getServiceInstanceId(Class<?> clazz) {
+        String serviceIdentifier = "";
+
+        if (!clazz.isAnnotationPresent(Service.class)) {
+            serviceIdentifier = clazz.getAnnotation(Service.class).value();
+        }
+
         if (Strings.isEmpty(serviceIdentifier)) {
             serviceIdentifier = clazz.getSimpleName();
         }
+
         return serviceIdentifier;
     }
+
+    private static void performFieldInjection(Field[] fields)
+            throws InstanceCreationWrapperException {
+        try {
+            for (Field field : fields) {
+                Class<?> fieldType = field.getType();
+
+                if (hasAutowired(field)) {
+                    Object instance;
+                    if (hasQualifier(field)) {
+                        String typeInstanceId = field.getAnnotation(Qualifier.class).value();
+                        instance = getInstanceFromContextUsingId(typeInstanceId, fieldType);
+                    } else {
+                        instance = getInstanceFromContextUsingType(fieldType);
+                    }
+                    field.setAccessible(true);
+                    field.set(fieldType, instance);
+                }
+
+            }
+        } catch (IllegalArgumentException | IllegalAccessException |
+                 InstanceNotFoundInAppContextException | MultipleCandidatesForInstanceException e) {
+            throw new InstanceCreationWrapperException(e.getMessage(), e);
+        }
+    }
+
+
+    private static void performSetterInjection(Class<?> serviceClass, Method[] methods)
+            throws InstanceCreationWrapperException {
+        try {
+            for (Method method : methods) {
+
+                if (hasAutowired(method)) {
+                    Class<?>[] paramTypes = method.getParameterTypes();
+                    // validator will throw error if any types aren't autowire enabled
+                    List<? extends Class<?>> validatedParamTypes =
+                            validateParameterTypes(serviceClass, paramTypes, "method");
+
+                    Parameter[] params = method.getParameters();
+                    Object[] argumentInstances = new Object[validatedParamTypes.size()];
+
+                    for (int i = 0; i < validatedParamTypes.size(); i++) {
+                        Object instance;
+
+                        if (hasQualifier(params[i])) {
+                            String argumentTypeId = params[i].getAnnotation(Qualifier.class).value();
+                            instance = Framework.getInstanceFromContextUsingId(argumentTypeId, validatedParamTypes.get(i));
+                        } else {
+                            instance = Framework.getInstanceFromContextUsingType(validatedParamTypes.get(i));
+                        }
+
+                        argumentInstances[i] = instance;
+                    }
+
+                    method.setAccessible(true);
+                    method.invoke(serviceClass, argumentInstances);
+                }
+            }
+        } catch (IllegalArgumentException | IllegalAccessException |
+                 InstanceNotFoundInAppContextException | InvocationTargetException |
+                 MultipleCandidatesForInstanceException e) {
+            throw new InstanceCreationWrapperException(e.getMessage(), e);
+        }
+
+    }
+
+
+    private static Object getInstanceFromContextUsingId(String instanceId, Class<?> serviceClass)
+            throws InstanceNotFoundInAppContextException {
+
+        if (!Framework.instanceIsAvailableInContextByName(instanceId)) {
+            throw new InstanceNotFoundInAppContextException(serviceClass);
+        }
+
+        return Framework.INSTANCES_MAPPED_BY_NAME.get(instanceId);
+    }
+
+    private static Object getInstanceFromContextUsingType(Class<?> serviceClassType)
+            throws InstanceNotFoundInAppContextException, MultipleCandidatesForInstanceException {
+
+        if (!Framework.INSTANCES_MAPPED_BY_TYPE.get(serviceClassType).isEmpty()) {
+            throw new InstanceNotFoundInAppContextException(serviceClassType);
+        }
+
+        Set<Object> instanceSet = Framework.INSTANCES_MAPPED_BY_TYPE.get(serviceClassType);
+
+        if (instanceSet.size() > 1) {
+            throw new MultipleCandidatesForInstanceException(serviceClassType, instanceSet);
+        }
+
+        return instanceSet.toArray()[0];
+    }
+
+    private static boolean hasQualifier(Parameter param) {
+        return param.isAnnotationPresent(Autowired.class);
+    }
+
+    private static boolean hasAutowired(Field field) {
+        return field.isAnnotationPresent(Autowired.class);
+    }
+
+    private static boolean hasAutowired(Method field) {
+        return field.isAnnotationPresent(Autowired.class);
+    }
+
+    private static boolean hasQualifier(Field field) {
+        return field.isAnnotationPresent(Qualifier.class);
+    }
+
+    private static boolean hasQualifier(Method field) {
+        return field.isAnnotationPresent(Qualifier.class);
+    }
+
 
     public void forwardContext() {
         try {
             Reflections reflections = new Reflections("application"); // should figure out how to bring this in as an option if needed (or leave blank)
 
             Set<Class<?>> serviceTypes = reflections.getTypesAnnotatedWith(Service.class);
-            KNOWN_SERVICE_BEAN_IDENTIFIERS.addAll(
-                    serviceTypes.stream().map(Framework::getServiceBeanId).collect(Collectors.toSet())
-            );
+            ANNOTATED_SERVICE_CLASS_TYPES.addAll(serviceTypes);
 
             createInstancesRecursively(serviceTypes);
 
@@ -251,24 +391,14 @@ public class Framework {
         }
     }
 
-    public void performDI() {
+    public void performDI() throws InstanceCreationWrapperException {
+        for (Object serviceClass : Framework.INSTANCES_MAPPED_BY_NAME.values()) {
 
-        try {
-            for (Object serviceClass : SERVICE_OBJECT_LIST) {
-                for (Field field : serviceClass.getClass().getDeclaredFields()) {
-                    if (field.isAnnotationPresent(Autowired.class)) {
-                        // get type
-                        Class<?> fieldType = field.getType();
-                        // get object of type
-                        Object instance = getServiceBeanOfType(fieldType);
-                        // autowire
-                        field.setAccessible(true);
-                        field.set(serviceClass, instance);
-                    }
-                }
-            }
-        } catch (Exception e) {
-            e.printStackTrace();
+            Framework.performFieldInjection(
+                    serviceClass.getClass().getFields());
+
+            Framework.performSetterInjection(serviceClass.getClass(),
+                    serviceClass.getClass().getMethods());
         }
     }
 
