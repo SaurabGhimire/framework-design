@@ -9,7 +9,7 @@ public class MultipleConstructorsNonAutowiredException extends Exception {
     private static String generateErrorMessage(Class<?> serviceClass, int count) {
         String serviceClassName = serviceClass.getName();
         return String.format("""
-                Error Message:
+                \nError Message:
                     Found %d constructors in class %s but none of them has @Autowired annotation.
                     Add the @Autowired  on one constructor which will be used for instance creation
                     and constructor injection.

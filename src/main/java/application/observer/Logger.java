@@ -2,7 +2,7 @@ package application.observer;
 
 import framework.annotations.Service;
 
-@Service
+@Service("loggerObserver")
 public class Logger implements Observer {
     @Override
     public void update(String message) {

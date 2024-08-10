@@ -13,11 +13,11 @@ public class MultipleCandidatesForInstanceException extends Exception {
         StringBuilder sb = new StringBuilder();
 
         while (setIterator.hasNext()) {
-            sb.append("- ").append(setIterator.next().getClass().getName()).append("\n");
+            sb.append("- ").append(setIterator.next().getClass().getName()).append("\n").append("\t");
         }
 
         return String.format("""
-                Error Message:
+                \nError Message:
                     Ambiguous dependency autowiring for class type: %s.
                     Found multiple candidates that could be used. Please used @Qualifier to specify one.
                     Candidates:

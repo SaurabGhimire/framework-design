@@ -8,7 +8,7 @@ public class MultipleAutowiredConstructorsException extends Exception {
     private static String generateErrorMessage(Class<?> serviceClass, int count) {
         String serviceClassName = serviceClass.getName();
         return String.format("""
-                Error Message:
+                \nError Message:
                     Only one constructor can have the @Autowired annotation in class %s. Found %d
                 """, serviceClassName, count);
     }
