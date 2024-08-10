@@ -16,7 +16,6 @@ public class Framework {
     private static final Map<String, Object> INSTANCES_MAPPED_BY_NAME = new HashMap<>();
     private static final Map<Class<?>, Set<Object>> INSTANCES_MAPPED_BY_TYPE = new HashMap<>();
     private static final Set<Class<?>> ANNOTATED_SERVICE_CLASS_TYPES = new HashSet<>();
-    private static final List<Object> SERVICE_OBJECT_LIST = new ArrayList<>();
 
     public Framework() {
         try {
@@ -27,37 +26,41 @@ public class Framework {
         }
     }
 
-    private static void createInstancesRecursively(Collection<? extends Class<?>> serviceTypes) throws
-            InstanceCreationWrapperException {
-        /*
-        - try_to_create_instance: A -> B -> C
-            - task requires B. try_to_create_instance: B -> C
-                - task requires C. try_to_create_instance: C
-                    - no args constructor — created. return nothing.
-                    - at this point, call stack returns to B creation, and at this instance all of B's dependency
-                - B checks for instance of C in application context, if 404 -> BeanInstanceNotFoundException
-                - else: B gets the required instances and injects them into constructor creation
-                - return to A
-            - A does the same thing, loop over constructor types, get the id, get instance from context,
-            inject into @Autowired constructor for A.
-        - Proceed i.e. exit recursive loop
-        */
-
-        /*
-        - we need to create service instances regardless — automatically create for those with no-args constructor
-        - however, if constructor has args,
-            1. check if class has multiple constructors,
-                a. if no, use the single constructor to create instance (annotated or not)
-                b. else prefer @autowired constructor. if multiple, throw error. if single -> use that (need a method)
-            2. if constructor has params, validate that they are beans only - else throw error
-            3. if beans only, recursively create and add instances to app context
-            4. after creating dependency beans, try creating parent bean and inject dependencies using the instance id from context
-        */
+    /**
+     * @param serviceTypes - Class<?>[] of classes that have @Service or abstractions of a
+     *                     class annotated with it
+     * @throws InstanceCreationWrapperException - wrapper exception to track all potential
+     *                                          exceptions and to keep method signature clean
+     * @implSpec -> steps:
+     * - try_to_create_instance: A -> B -> C
+     * - task requires B. try_to_create_instance: B -> C
+     * - task requires C. try_to_create_instance: C
+     * - no args constructor — created. return nothing.
+     * - at this point, call stack returns to B creation, and at this instance all of B's dependency
+     * - B checks for instance of C in application context, if 404 -> BeanInstanceNotFoundException
+     * - else: B gets the required instances and injects them into constructor creation
+     * - return to A
+     * - A does the same thing, loop over constructor types, get the id, get instance from context,
+     * inject into @Autowired constructor for A.
+     * - Proceed i.e. exit recursive loop
+     */
+    private static void createInstancesRecursively(Collection<? extends Class<?>> serviceTypes)
+            throws InstanceCreationWrapperException {
 
         for (Class<?> serviceClassType : serviceTypes) {
             String serviceClassId = getClassInstanceIdentifier(serviceClassType);
 
+            if (Framework.instanceIsAvailableInContextCombined(serviceClassType, serviceClassId)) {
+                continue;
+            }
+
             Constructor<?> constructor = getPreferredConstructor(serviceClassType);
+            // if no constructor, skip potential interface
+            if (constructor == null) {
+                // todo: might need to create instances of inheritors/implementors — interfaces are being left null instances
+                continue;
+            }
+
 
             List<? extends Class<?>> paramClasses = validateParameterTypes(serviceClassType,
                     constructor.getParameterTypes(), "constructor");
@@ -68,21 +71,42 @@ public class Framework {
 
             // classes at this point have no-args constructors
             // OR their dependencies are already in the app context
-            Object instance = createOrGetServiceInstance(serviceClassType, constructor, paramClasses);
+            Object instance = createServiceInstance(serviceClassType, constructor, paramClasses);
 
-            updateApplicationContext(serviceClassType, instance, serviceClassId);
+            addInstanceToApplicationContext(serviceClassType, instance, serviceClassId);
 
         }
     }
 
-    private static void updateApplicationContext(Class<?> serviceClassType, Object instance, String serviceClassId) {
-        SERVICE_OBJECT_LIST.add(instance);
-        Framework.INSTANCES_MAPPED_BY_NAME.put(serviceClassId, instance);
+    private static void addInstanceToApplicationContext(Class<?> serviceClassType, Object instance, String serviceClassId) {
 
+        registerInstanceByNameIdentifier(instance, serviceClassId);
+
+        registerInstanceByType(serviceClassType, instance);
+
+        // map instance to superclass and interface types
+        getSuperClasses(serviceClassType).forEach(superclassType -> {
+            registerInstanceByType(superclassType, instance);
+        });
+        Arrays.stream(serviceClassType.getInterfaces()).forEach(interfaceType -> {
+            registerInstanceByType(interfaceType, instance);
+        });
+
+    }
+
+    private static void registerInstanceByNameIdentifier(Object instance, String serviceClassId) {
+        if (!Framework.INSTANCES_MAPPED_BY_NAME.containsKey(serviceClassId)) {
+            Framework.INSTANCES_MAPPED_BY_NAME.put(serviceClassId, instance);
+        }
+    }
+
+    private static void registerInstanceByType(Class<?> serviceClassType, Object instance) {
         if (Framework.INSTANCES_MAPPED_BY_TYPE.containsKey(serviceClassType)) {
             Framework.INSTANCES_MAPPED_BY_TYPE.get(serviceClassType).add(instance);
         } else {
-            Framework.INSTANCES_MAPPED_BY_TYPE.put(serviceClassType, Set.of(instance));
+            HashSet<Object> instanceSet = new HashSet<>();
+            instanceSet.add(instance);
+            Framework.INSTANCES_MAPPED_BY_TYPE.put(serviceClassType, instanceSet);
         }
     }
 
@@ -116,12 +140,14 @@ public class Framework {
 
     private static Constructor<?> getPreferredConstructor(Class<?> serviceClass) throws InstanceCreationWrapperException {
         try {
-
             if (getAutowiredConstructor(serviceClass) != null) {
                 return getAutowiredConstructor(serviceClass);
             }
 
             Constructor<?>[] constructors = serviceClass.getConstructors();
+
+            if (constructors.length == 0) return null;
+
             if (constructors.length > 1) {
                 // if class has multiple constructors and no @autowired, error out
                 // and require adding it to one constructor
@@ -160,15 +186,14 @@ public class Framework {
      * @return newly created instance
      * @throws InstanceCreationWrapperException - a wrapper exception that helps keep the number of exceptions in the signature low
      */
-    private static Object createOrGetServiceInstance(Class<?> serviceClassType,
-                                                     Constructor<?> constructor,
-                                                     List<? extends Class<?>> paramTypes)
+    private static Object createServiceInstance(Class<?> serviceClassType,
+                                                Constructor<?> constructor,
+                                                List<? extends Class<?>> paramTypes)
             throws InstanceCreationWrapperException {
 
         String serviceId = Framework.getServiceInstanceId(serviceClassType);
 
-        //todo: need to add @Qualifier support for params of a constructor else will fail on multiple candidates
-        if (instanceIsAvailableInContextByType(serviceClassType)) {
+        if (instanceIsAvailableInContextCombined(serviceClassType, serviceId)) {
             return Framework.INSTANCES_MAPPED_BY_TYPE.get(serviceClassType);
         }
 
@@ -190,20 +215,25 @@ public class Framework {
                 && Framework.INSTANCES_MAPPED_BY_TYPE.get(serviceClassType) != null;
     }
 
+    private static boolean instanceIsAvailableInContextCombined(Class<?> serviceClassType, String instanceId) {
+        return instanceIsAvailableInContextByType(serviceClassType)
+                || instanceIsAvailableInContextByName(instanceId);
+    }
+
     private static Object createInstanceWithHasArgsConstructor(Class<?> serviceClass, Constructor<?> constructor,
                                                                List<? extends Class<?>> paramTypes)
             throws InstanceCreationWrapperException {
         try {
             Object[] dependencies = new Object[paramTypes.size()];
-
+            Parameter[] params = constructor.getParameters();
             for (int i = 0; i < paramTypes.size(); i++) {
-                String instanceId = Framework.getServiceInstanceId(paramTypes.get(i));
+                Object instance;
 
-                Object instance = getInstanceFromContextUsingType(paramTypes.get(i));
-
-
-                if (!paramTypes.get(i).isAssignableFrom(instance.getClass())) {
-                    throw new DependencyInstanceMismatchException(paramTypes.get(i), instance, serviceClass);
+                if (hasQualifier(params[i])) {
+                    String instanceId = Framework.getServiceInstanceId(paramTypes.get(i));
+                    instance = Framework.getInstanceFromContextUsingId(instanceId, paramTypes.get(i));
+                } else {
+                    instance = getInstanceFromContextUsingType(paramTypes.get(i));
                 }
 
                 validateIsAssignable(paramTypes.get(i), instance, serviceClass);
@@ -341,7 +371,7 @@ public class Framework {
     private static Object getInstanceFromContextUsingType(Class<?> serviceClassType)
             throws InstanceNotFoundInAppContextException, MultipleCandidatesForInstanceException {
 
-        if (!Framework.INSTANCES_MAPPED_BY_TYPE.get(serviceClassType).isEmpty()) {
+        if (Framework.INSTANCES_MAPPED_BY_TYPE.get(serviceClassType).isEmpty()) {
             throw new InstanceNotFoundInAppContextException(serviceClassType);
         }
 
@@ -374,13 +404,32 @@ public class Framework {
         return field.isAnnotationPresent(Qualifier.class);
     }
 
+    private static void registerAnnotatedServiceClassTypes(Set<Class<?>> serviceTypes) {
+        Framework.ANNOTATED_SERVICE_CLASS_TYPES.addAll(serviceTypes);
+
+        serviceTypes.forEach(type -> {
+            Framework.ANNOTATED_SERVICE_CLASS_TYPES.addAll(getSuperClasses(type));
+            Framework.ANNOTATED_SERVICE_CLASS_TYPES.addAll(Arrays.asList(type.getInterfaces()));
+        });
+    }
+
+    private static Collection<Class<?>> getSuperClasses(Class<?> type) {
+        Collection<Class<?>> superClasses = new HashSet<>();
+        Class<?> superclass = type.getSuperclass();
+        while (superclass != null) {
+            superClasses.add(superclass);
+            superclass = superclass.getSuperclass();
+        }
+        return superClasses;
+    }
 
     public void forwardContext() {
         try {
             Reflections reflections = new Reflections("application"); // should figure out how to bring this in as an option if needed (or leave blank)
 
             Set<Class<?>> serviceTypes = reflections.getTypesAnnotatedWith(Service.class);
-            ANNOTATED_SERVICE_CLASS_TYPES.addAll(serviceTypes);
+
+            registerAnnotatedServiceClassTypes(serviceTypes);
 
             createInstancesRecursively(serviceTypes);
 
@@ -402,18 +451,4 @@ public class Framework {
         }
     }
 
-    public Object getServiceBeanOfType(Class<?> type) {
-        Object service = null;
-        try {
-            for (Object theClass : SERVICE_OBJECT_LIST) {
-                Class<?>[] interfaces = theClass.getClass().getInterfaces();
-                for (Class<?> theInterface : interfaces) {
-                    if (theInterface.getSimpleName().contentEquals(type.getSimpleName())) service = theClass;
-                }
-            }
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-        return service;
-    }
 }

@@ -9,7 +9,8 @@ public class DemoService {
     DemoDAO demoDAO;
 
     @Autowired
-    public DemoService(DemoDAO demoDAO){
+    public DemoService(DemoDAO demoDAO) {
+        this.demoDAO = demoDAO;
         System.out.println("Inside constructor of DemoService — DemoDAO param");
     }
 
@@ -17,7 +18,7 @@ public class DemoService {
 //        System.out.println("Inside constructor of DemoService");
 //    }
 
-    public void print(){
+    public void print() {
         System.out.println("Inside print method of DemoService");
         demoDAO.print();
     }
