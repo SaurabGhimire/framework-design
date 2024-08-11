@@ -1,12 +1,16 @@
 package application;
 
+import application.observer.Observer;
 import framework.annotations.Autowired;
+import framework.annotations.Qualifier;
 import framework.annotations.Service;
 
 @Service
 public class DemoService {
     @Autowired
     DemoDAO demoDAO;
+
+    Observer observer;
 
     @Autowired
     public DemoService(DemoDAO demoDAO) {
@@ -21,5 +25,11 @@ public class DemoService {
     public void print() {
         System.out.println("Inside print method of DemoService");
         demoDAO.print();
+    }
+
+    @Autowired
+    public void setObserver(@Qualifier("emailSenderObserver") Observer observer) {
+        this.observer = observer;
+        System.out.println("Setter injection of observer instance: " + observer);
     }
 }

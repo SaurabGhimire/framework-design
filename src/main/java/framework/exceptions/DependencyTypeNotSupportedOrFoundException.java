@@ -12,7 +12,7 @@ public class DependencyTypeNotSupportedOrFoundException extends Exception {
         String serviceClassName = serviceClass.getName();
         String dependencyClassNames = notSupportDependencies.stream().map(Class::getName).collect(Collectors.joining("\n"));
         return String.format("""
-                Error Message:
+                \nError Message:
                     Parameter(s) of %s in %s are not known to the framework and can't be created
                     %s
                 """, serviceClassName, type, dependencyClassNames);

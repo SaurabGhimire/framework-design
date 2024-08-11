@@ -48,7 +48,7 @@ public class Framework {
             throws InstanceCreationWrapperException {
 
         for (Class<?> serviceClassType : serviceTypes) {
-            String serviceClassId = getClassInstanceIdentifier(serviceClassType);
+            String serviceClassId = getServiceInstanceId(serviceClassType);
 
             if (Framework.instanceIsAvailableInContextCombined(serviceClassType, serviceClassId)) {
                 continue;
@@ -279,20 +279,18 @@ public class Framework {
     }
 
     private static String getServiceInstanceId(Class<?> clazz) {
-        String serviceIdentifier = "";
+        String serviceIdentifier;
 
-        if (!clazz.isAnnotationPresent(Service.class)) {
+        if (hasServiceAnnotationWithValue(clazz)) {
             serviceIdentifier = clazz.getAnnotation(Service.class).value();
-        }
-
-        if (Strings.isEmpty(serviceIdentifier)) {
+        } else {
             serviceIdentifier = clazz.getSimpleName();
         }
 
         return serviceIdentifier;
     }
 
-    private static void performFieldInjection(Field[] fields)
+    private static void performFieldInjection(Object parentClassInstance, Field[] fields)
             throws InstanceCreationWrapperException {
         try {
             for (Field field : fields) {
@@ -307,7 +305,7 @@ public class Framework {
                         instance = getInstanceFromContextUsingType(fieldType);
                     }
                     field.setAccessible(true);
-                    field.set(fieldType, instance);
+                    field.set(parentClassInstance, fieldType.cast(instance));
                 }
 
             }
@@ -318,7 +316,7 @@ public class Framework {
     }
 
 
-    private static void performSetterInjection(Class<?> serviceClass, Method[] methods)
+    private static void performSetterInjection(Object parentClassInstance, Class<?> serviceClass, Method[] methods)
             throws InstanceCreationWrapperException {
         try {
             for (Method method : methods) {
@@ -346,7 +344,7 @@ public class Framework {
                     }
 
                     method.setAccessible(true);
-                    method.invoke(serviceClass, argumentInstances);
+                    method.invoke(parentClassInstance, argumentInstances);
                 }
             }
         } catch (IllegalArgumentException | IllegalAccessException |
@@ -362,7 +360,7 @@ public class Framework {
             throws InstanceNotFoundInAppContextException {
 
         if (!Framework.instanceIsAvailableInContextByName(instanceId)) {
-            throw new InstanceNotFoundInAppContextException(serviceClass);
+            throw new InstanceNotFoundInAppContextException(serviceClass, instanceId);
         }
 
         return Framework.INSTANCES_MAPPED_BY_NAME.get(instanceId);
@@ -384,8 +382,12 @@ public class Framework {
         return instanceSet.toArray()[0];
     }
 
+    private static boolean hasServiceAnnotation(Class<?> clazz) {
+        return clazz.isAnnotationPresent(Service.class);
+    }
+
     private static boolean hasQualifier(Parameter param) {
-        return param.isAnnotationPresent(Autowired.class);
+        return param.isAnnotationPresent(Qualifier.class);
     }
 
     private static boolean hasAutowired(Field field) {
@@ -397,10 +399,6 @@ public class Framework {
     }
 
     private static boolean hasQualifier(Field field) {
-        return field.isAnnotationPresent(Qualifier.class);
-    }
-
-    private static boolean hasQualifier(Method field) {
         return field.isAnnotationPresent(Qualifier.class);
     }
 
@@ -423,6 +421,29 @@ public class Framework {
         return superClasses;
     }
 
+    private static Object getInstanceFromAppContext(Class<?> serviceClassType)
+            throws InstanceCreationWrapperException {
+        try {
+            Object instance;
+
+            if (hasServiceAnnotationWithValue(serviceClassType)) {
+                String instanceId = serviceClassType.getAnnotation(Service.class).value();
+                instance = Framework.getInstanceFromContextUsingId(instanceId, serviceClassType);
+            } else {
+                instance = Framework.getInstanceFromContextUsingType(serviceClassType);
+            }
+
+            return instance;
+        } catch (InstanceNotFoundInAppContextException | MultipleCandidatesForInstanceException e) {
+            throw new InstanceCreationWrapperException(e.getMessage(), e);
+        }
+    }
+
+    private static boolean hasServiceAnnotationWithValue(Class<?> serviceClassType) {
+        return serviceClassType.isAnnotationPresent(Service.class) &&
+                !Strings.isEmpty(serviceClassType.getAnnotation(Service.class).value());
+    }
+
     public void forwardContext() {
         try {
             Reflections reflections = new Reflections("application"); // should figure out how to bring this in as an option if needed (or leave blank)
@@ -441,13 +462,20 @@ public class Framework {
     }
 
     public void performDI() throws InstanceCreationWrapperException {
-        for (Object serviceClass : Framework.INSTANCES_MAPPED_BY_NAME.values()) {
+        List<Class<?>> serviceAnnotatedClasses = Framework.ANNOTATED_SERVICE_CLASS_TYPES
+                .stream()
+                .filter(Framework::hasServiceAnnotation)
+                .toList();
 
-            Framework.performFieldInjection(
-                    serviceClass.getClass().getFields());
+        for (Class<?> serviceClassType : serviceAnnotatedClasses) {
 
-            Framework.performSetterInjection(serviceClass.getClass(),
-                    serviceClass.getClass().getMethods());
+            Object parentClassInstance = Framework.getInstanceFromAppContext(serviceClassType);
+
+            Framework.performFieldInjection(parentClassInstance,
+                    serviceClassType.getDeclaredFields());
+
+            Framework.performSetterInjection(parentClassInstance, serviceClassType,
+                    serviceClassType.getDeclaredMethods());
         }
     }
 

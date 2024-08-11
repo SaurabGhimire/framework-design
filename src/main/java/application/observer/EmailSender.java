@@ -2,7 +2,7 @@ package application.observer;
 
 import framework.annotations.Service;
 
-@Service
+@Service("emailSenderObserver")
 public class EmailSender implements Observer {
     @Override
     public void update(String message) {

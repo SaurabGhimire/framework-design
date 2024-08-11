@@ -11,7 +11,7 @@ public class DependencyInstanceMismatchException extends Exception {
         String paramTypeName = paramType.getName();
         String serviceClassName = serviceClass.getName();
         return String.format("""
-                Error Message:
+                \nError Message:
                     Found a mismatch while trying to assign an instance (from the application context) of type: %s
                     to the Parameter Type: %s
                     in the class: %s.
