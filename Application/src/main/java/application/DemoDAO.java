@@ -4,6 +4,7 @@ import application.observer.Observer;
 import framework.annotations.Autowired;
 import framework.annotations.Qualifier;
 import framework.annotations.Service;
+import framework.annotations.Value;
 import lombok.Getter;
 
 @Service
@@ -12,6 +13,9 @@ public class DemoDAO {
     @Qualifier("loggerObserver")
     @Getter
     Observer observer;
+
+    @Value("env")
+    String environment;
 
     @Autowired
     public DemoDAO() {

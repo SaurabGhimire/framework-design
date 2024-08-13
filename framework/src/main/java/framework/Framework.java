@@ -3,7 +3,9 @@ package framework;
 import framework.annotations.Autowired;
 import framework.annotations.Qualifier;
 import framework.annotations.Service;
+import framework.annotations.Value;
 import framework.exceptions.*;
+import framework.utils.PropertyAccessor;
 import org.apache.logging.log4j.util.Strings;
 import org.reflections.Reflections;
 
@@ -309,6 +311,13 @@ public class Framework {
                     field.setAccessible(true);
                     field.set(parentClassInstance, fieldType.cast(instance));
                 }
+                // Inject Value if the field has @Value annotation
+                if (hasValueAnnotation(field)) {
+                    String key = field.getAnnotation(Value.class).value();
+                    Object propertyValue = PropertyAccessor.getValueOf(key);
+                    field.setAccessible(true);
+                    field.set(parentClassInstance, fieldType.cast(propertyValue));
+                }
 
             }
         } catch (IllegalArgumentException | IllegalAccessException |
@@ -404,6 +413,10 @@ public class Framework {
         return field.isAnnotationPresent(Qualifier.class);
     }
 
+    private static boolean hasValueAnnotation(Field field) {
+        return field.isAnnotationPresent(Value.class);
+    }
+
     private static void registerAnnotatedServiceClassTypes(Set<Class<?>> serviceTypes) {
         Framework.ANNOTATED_SERVICE_CLASS_TYPES.addAll(serviceTypes);
 
@@ -423,7 +436,7 @@ public class Framework {
         return superClasses;
     }
 
-    private static Object getInstanceFromAppContext(Class<?> serviceClassType)
+    public static Object getInstanceFromAppContext(Class<?> serviceClassType)
             throws InstanceCreationWrapperException {
         try {
             Object instance;
