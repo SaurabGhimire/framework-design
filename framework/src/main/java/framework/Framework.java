@@ -17,12 +17,14 @@ public class Framework {
     private static final Map<Class<?>, Set<Object>> INSTANCES_MAPPED_BY_TYPE = new HashMap<>();
     private static final Set<Class<?>> ANNOTATED_SERVICE_CLASS_TYPES = new HashSet<>();
 
-    public Framework() {
-        try {
-            forwardContext();
-        } catch (Exception e) {
-//            e.printStackTrace();
-            throw new RuntimeException(e.getMessage(), e);
+    public static void run(Class<?> mainClass, String... args) throws Exception {
+        // Scan and initialize components
+        // Here, for simplicity, we're assuming you have a basic DI setup
+        forwardContext();
+        // Retrieve and run the Application instance
+        Object appInstance = INSTANCES_MAPPED_BY_NAME.get(mainClass);
+        if (appInstance instanceof Runnable) {
+            ((Runnable) appInstance).run();
         }
     }
 
@@ -444,7 +446,7 @@ public class Framework {
                 !Strings.isEmpty(serviceClassType.getAnnotation(Service.class).value());
     }
 
-    public void forwardContext() {
+    public static void forwardContext() {
         try {
             Reflections reflections = new Reflections("application"); // should figure out how to bring this in as an option if needed (or leave blank)
 
@@ -461,7 +463,7 @@ public class Framework {
         }
     }
 
-    public void performDI() throws InstanceCreationWrapperException {
+    public static void performDI() throws InstanceCreationWrapperException {
         List<Class<?>> serviceAnnotatedClasses = Framework.ANNOTATED_SERVICE_CLASS_TYPES
                 .stream()
                 .filter(Framework::hasServiceAnnotation)
