@@ -7,7 +7,7 @@ import framework.annotations.Service;
 
 @Service
 public class DemoService {
-    @Autowired
+
     DemoDAO demoDAO;
 
     @Autowired
