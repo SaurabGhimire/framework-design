@@ -6,6 +6,8 @@ import framework.exceptions.InstanceCreationWrapperException;
 import framework.exceptions.InvalidCronStringFormat;
 import framework.utils.CheckForAnnotation;
 import framework.utils.CronUtility;
+import framework.utils.PropertyAccessor;
+import org.apache.logging.log4j.util.Strings;
 
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
@@ -16,7 +18,8 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
 public class Scheduling {
-    private static final ScheduledExecutorService scheduledExecutorService = Executors.newScheduledThreadPool(5);
+    private static final int DEFAULT_THREAD_POOL_SIZE = 5;
+    private static final ScheduledExecutorService scheduledExecutorService = Executors.newScheduledThreadPool(getThreadPoolSize());
 
     public static void trigger(List<Class<?>> serviceAnnotatedClasses)
             throws InvalidCronStringFormat, InstanceCreationWrapperException {
@@ -31,6 +34,22 @@ public class Scheduling {
         }
     }
 
+    private static int getThreadPoolSize() {
+        String poolSizeString = (String) PropertyAccessor.getValueOf("scheduling.pool.size");
+        int threadPoolSize = DEFAULT_THREAD_POOL_SIZE;
+
+        try {
+            if (!Strings.isEmpty(poolSizeString)) {
+                threadPoolSize = Integer.parseInt(poolSizeString);
+            }
+        } catch (NumberFormatException e) {
+            System.out.println("Ignoring `scheduling.pool.size` setting in properties file since it's " +
+                    "not a valid number/integer. Found: " + poolSizeString);
+        }
+
+        return threadPoolSize;
+    }
+
     private static void scheduleMethods(Object classInstance, List<Method> methods) throws InvalidCronStringFormat {
         for (Method method : methods) {
             long fixedRate = method.getAnnotation(Scheduled.class).fixedRate();
@@ -39,7 +58,7 @@ public class Scheduling {
             if (fixedRate > 0L) {
                 secondsToSchedule = fixedRate / 1000;
             } else {
-                secondsToSchedule = CronUtility.getTotalSeconds(cron);
+                secondsToSchedule = CronUtility.parseTotalSecondsFromCron(cron);
             }
 
             scheduleMethod(classInstance, method, secondsToSchedule);

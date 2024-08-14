@@ -3,8 +3,8 @@ package framework.utils;
 import framework.exceptions.InvalidCronStringFormat;
 
 public class CronUtility {
-    public static int getTotalSeconds(String cronString) throws InvalidCronStringFormat {
-        String[] secondsAndMinutes = cronString.split(" ");
+    public static int parseTotalSecondsFromCron(String cronString) throws InvalidCronStringFormat {
+        String[] secondsAndMinutes = cronString.trim().split(" ");
         if (secondsAndMinutes.length != 2) {
             throwCronFormatException(cronString);
         }
