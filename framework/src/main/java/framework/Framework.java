@@ -7,6 +7,7 @@ import org.apache.logging.log4j.util.Strings;
 import org.reflections.Reflections;
 
 import javax.annotation.Nullable;
+import java.lang.annotation.Annotation;
 import java.lang.reflect.*;
 import java.sql.Ref;
 import java.util.*;
@@ -415,12 +416,25 @@ public class Framework {
     }
 
     private static void registerAnnotatedServiceClassTypes(Set<Class<?>> serviceTypes) {
-        Framework.ANNOTATED_SERVICE_CLASS_TYPES.addAll(serviceTypes);
+        Set<Class<?>> filtered = filterByActiveProfile(serviceTypes);
+        Framework.ANNOTATED_SERVICE_CLASS_TYPES.addAll(filtered);
 
         serviceTypes.forEach(type -> {
-            Framework.ANNOTATED_SERVICE_CLASS_TYPES.addAll(getSuperClasses(type));
-            Framework.ANNOTATED_SERVICE_CLASS_TYPES.addAll(Arrays.asList(type.getInterfaces()));
+            Framework.ANNOTATED_SERVICE_CLASS_TYPES.addAll(filterByActiveProfile(getSuperClasses(type)));
+            Framework.ANNOTATED_SERVICE_CLASS_TYPES.addAll(filterByActiveProfile(Arrays.asList(type.getInterfaces())));
         });
+        System.out.println("test");
+    }
+
+    private static Set<Class<?>> filterByActiveProfile(Collection<Class<?>> theServiceClasses){
+        return theServiceClasses.stream().filter(theServiceClass -> {
+            if(!theServiceClass.isAnnotationPresent(Profile.class)){
+                return true;
+            }
+            String theServiceClassProfile = theServiceClass.getAnnotation(Profile.class).value();
+            String activeProfile = (String) PropertyAccessor.getValueOf("profiles.active");
+            return Objects.equals(activeProfile, theServiceClassProfile);
+        }).collect(Collectors.toSet());
     }
 
     // Scan all classes with @ConfigurationProperties
@@ -430,7 +444,8 @@ public class Framework {
         try {
             Reflections reflections = new Reflections("application");
             Set<Class<?>> theConfigurationClasses = reflections.getTypesAnnotatedWith(ConfigurationProperties.class);
-            for(Class<?> theConfigurationClass : theConfigurationClasses){
+            Set<Class<?>> activeTheConfigurationClasses = filterByActiveProfile(theConfigurationClasses);
+            for(Class<?> theConfigurationClass : activeTheConfigurationClasses){
                 Object instance = theConfigurationClass.getConstructor().newInstance();
                 String prefix = theConfigurationClass.getAnnotation(ConfigurationProperties.class).prefix();
                 Field[] fields = theConfigurationClass.getDeclaredFields();
@@ -487,6 +502,8 @@ public class Framework {
             Reflections reflections = new Reflections("application"); // should figure out how to bring this in as an option if needed (or leave blank)
 
             Set<Class<?>> serviceTypes = reflections.getTypesAnnotatedWith(Service.class);
+
+            serviceTypes = filterByActiveProfile(serviceTypes);
 
             registerConfigurationProperties();
 
