@@ -10,6 +10,9 @@ public class DemoService {
     @Autowired
     DemoDAO demoDAO;
 
+    @Autowired
+    private MailProperties mailProperties;
+
     Observer observer;
 
     @Autowired
@@ -17,10 +20,6 @@ public class DemoService {
         this.demoDAO = demoDAO;
         System.out.println("Inside constructor of DemoService — DemoDAO param");
     }
-
-//    public DemoService(){
-//        System.out.println("Inside constructor of DemoService");
-//    }
 
     public void print() {
         System.out.println("Inside print method of DemoService");

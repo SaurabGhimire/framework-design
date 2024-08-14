@@ -1,9 +1,6 @@
 package framework;
 
-import framework.annotations.Autowired;
-import framework.annotations.Qualifier;
-import framework.annotations.Service;
-import framework.annotations.Value;
+import framework.annotations.*;
 import framework.exceptions.*;
 import framework.utils.PropertyAccessor;
 import org.apache.logging.log4j.util.Strings;
@@ -11,6 +8,7 @@ import org.reflections.Reflections;
 
 import javax.annotation.Nullable;
 import java.lang.reflect.*;
+import java.sql.Ref;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -20,13 +18,12 @@ public class Framework {
     private static final Set<Class<?>> ANNOTATED_SERVICE_CLASS_TYPES = new HashSet<>();
 
     public static void run(Class<?> mainClass, String... args) throws Exception {
-        // Scan and initialize components
-        // Here, for simplicity, we're assuming you have a basic DI setup
         forwardContext();
-        // Retrieve and run the Application instance
-        Object appInstance = INSTANCES_MAPPED_BY_NAME.get(mainClass);
+        Object appInstance = mainClass.getDeclaredConstructor().newInstance();
         if (appInstance instanceof Runnable) {
             ((Runnable) appInstance).run();
+        } else{
+            System.out.println("Instance is not RUnnable");
         }
     }
 
@@ -426,6 +423,32 @@ public class Framework {
         });
     }
 
+    // Scan all classes with @ConfigurationProperties
+    // Set fields with valur for prefix+.+getName from application.properties
+    // Add instance to Map
+    private static void registerConfigurationProperties(){
+        try {
+            Reflections reflections = new Reflections("application");
+            Set<Class<?>> theConfigurationClasses = reflections.getTypesAnnotatedWith(ConfigurationProperties.class);
+            for(Class<?> theConfigurationClass : theConfigurationClasses){
+                Object instance = theConfigurationClass.getConstructor().newInstance();
+                String prefix = theConfigurationClass.getAnnotation(ConfigurationProperties.class).prefix();
+                Field[] fields = theConfigurationClass.getDeclaredFields();
+                for (Field field : fields) {
+                    String key = prefix + "." + field.getName();
+                    Object propertyValue = PropertyAccessor.getValueOf(key);
+                    field.setAccessible(true);
+                    field.set(instance, field.getType().cast(propertyValue));
+                }
+                HashSet<Object> instanceSet = new HashSet<>();
+                instanceSet.add(instance);
+                Framework.INSTANCES_MAPPED_BY_TYPE.put(theConfigurationClass, instanceSet);
+            }
+        } catch (Exception e){
+            e.printStackTrace();
+        }
+    }
+
     private static Collection<Class<?>> getSuperClasses(Class<?> type) {
         Collection<Class<?>> superClasses = new HashSet<>();
         Class<?> superclass = type.getSuperclass();
@@ -464,6 +487,8 @@ public class Framework {
             Reflections reflections = new Reflections("application"); // should figure out how to bring this in as an option if needed (or leave blank)
 
             Set<Class<?>> serviceTypes = reflections.getTypesAnnotatedWith(Service.class);
+
+            registerConfigurationProperties();
 
             registerAnnotatedServiceClassTypes(serviceTypes);
 
