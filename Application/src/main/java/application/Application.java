@@ -4,8 +4,6 @@ import framework.Framework;
 import framework.annotations.Autowired;
 
 public class Application implements Runnable {
-    @Autowired
-    private DemoService demoService;
     public static void main(String[] args) {
         try {
             Framework.run(Application.class, args);
@@ -15,6 +13,6 @@ public class Application implements Runnable {
     }
     @Override
     public void run()  {
-        demoService.print();
+        System.out.println("Inside run method of Application");
     }
 }
