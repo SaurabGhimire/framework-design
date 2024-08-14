@@ -2,14 +2,13 @@ package framework;
 
 import framework.annotations.*;
 import framework.exceptions.*;
+import framework.scheduled.Scheduling;
 import framework.utils.PropertyAccessor;
 import org.apache.logging.log4j.util.Strings;
 import org.reflections.Reflections;
 
 import javax.annotation.Nullable;
-import java.lang.annotation.Annotation;
 import java.lang.reflect.*;
-import java.sql.Ref;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -23,7 +22,7 @@ public class Framework {
         Object appInstance = mainClass.getDeclaredConstructor().newInstance();
         if (appInstance instanceof Runnable) {
             ((Runnable) appInstance).run();
-        } else{
+        } else {
             System.out.println("Instance is not RUnnable");
         }
     }
@@ -59,7 +58,6 @@ public class Framework {
             Constructor<?> constructor = getPreferredConstructor(serviceClassType);
             // if no constructor, skip potential interface
             if (constructor == null) {
-                // todo: might need to create instances of inheritors/implementors — interfaces are being left null instances
                 continue;
             }
 
@@ -426,9 +424,9 @@ public class Framework {
         System.out.println("test");
     }
 
-    private static Set<Class<?>> filterByActiveProfile(Collection<Class<?>> theServiceClasses){
+    private static Set<Class<?>> filterByActiveProfile(Collection<Class<?>> theServiceClasses) {
         return theServiceClasses.stream().filter(theServiceClass -> {
-            if(!theServiceClass.isAnnotationPresent(Profile.class)){
+            if (!theServiceClass.isAnnotationPresent(Profile.class)) {
                 return true;
             }
             String theServiceClassProfile = theServiceClass.getAnnotation(Profile.class).value();
@@ -440,12 +438,12 @@ public class Framework {
     // Scan all classes with @ConfigurationProperties
     // Set fields with valur for prefix+.+getName from application.properties
     // Add instance to Map
-    private static void registerConfigurationProperties(){
+    private static void registerConfigurationProperties() {
         try {
             Reflections reflections = new Reflections("application");
             Set<Class<?>> theConfigurationClasses = reflections.getTypesAnnotatedWith(ConfigurationProperties.class);
             Set<Class<?>> activeTheConfigurationClasses = filterByActiveProfile(theConfigurationClasses);
-            for(Class<?> theConfigurationClass : activeTheConfigurationClasses){
+            for (Class<?> theConfigurationClass : activeTheConfigurationClasses) {
                 Object instance = theConfigurationClass.getConstructor().newInstance();
                 String prefix = theConfigurationClass.getAnnotation(ConfigurationProperties.class).prefix();
                 Field[] fields = theConfigurationClass.getDeclaredFields();
@@ -459,7 +457,7 @@ public class Framework {
                 instanceSet.add(instance);
                 Framework.INSTANCES_MAPPED_BY_TYPE.put(theConfigurationClass, instanceSet);
             }
-        } catch (Exception e){
+        } catch (Exception e) {
             e.printStackTrace();
         }
     }
@@ -512,19 +510,16 @@ public class Framework {
             createInstancesRecursively(serviceTypes);
 
             performDI();
+
+            Scheduling.trigger(getServiceAnnotatedClasses());
+
         } catch (Exception e) {
-//            e.printStackTrace();
             throw new RuntimeException(e.getMessage(), e);
         }
     }
 
     public static void performDI() throws InstanceCreationWrapperException {
-        List<Class<?>> serviceAnnotatedClasses = Framework.ANNOTATED_SERVICE_CLASS_TYPES
-                .stream()
-                .filter(Framework::hasServiceAnnotation)
-                .toList();
-
-        for (Class<?> serviceClassType : serviceAnnotatedClasses) {
+        for (Class<?> serviceClassType : getServiceAnnotatedClasses()) {
 
             Object parentClassInstance = Framework.getInstanceFromAppContext(serviceClassType);
 
@@ -534,6 +529,13 @@ public class Framework {
             Framework.performSetterInjection(parentClassInstance, serviceClassType,
                     serviceClassType.getDeclaredMethods());
         }
+    }
+
+    private static List<Class<?>> getServiceAnnotatedClasses() {
+        return Framework.ANNOTATED_SERVICE_CLASS_TYPES
+                .stream()
+                .filter(Framework::hasServiceAnnotation)
+                .toList();
     }
 
 }
