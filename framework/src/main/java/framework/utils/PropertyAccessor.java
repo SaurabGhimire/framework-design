@@ -21,6 +21,7 @@ public class PropertyAccessor {
         }
     }
 
+
     public static Object getValueOf(String key) {
         if (properties == null) {
             synchronized (PropertyAccessor.class) {

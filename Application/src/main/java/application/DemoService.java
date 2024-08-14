@@ -3,17 +3,16 @@ package application;
 import application.observer.Observer;
 import framework.annotations.Autowired;
 import framework.annotations.Qualifier;
+import framework.annotations.Scheduled;
 import framework.annotations.Service;
 
 @Service
 public class DemoService {
 
     DemoDAO demoDAO;
-
+    Observer observer;
     @Autowired
     private MailProperties mailProperties;
-
-    Observer observer;
 
     @Autowired
     public DemoService(DemoDAO demoDAO) {
@@ -30,5 +29,15 @@ public class DemoService {
     public void setObserver(@Qualifier("emailSenderObserver") Observer observer) {
         this.observer = observer;
         System.out.println("Setter injection of observer instance: " + observer);
+    }
+
+    @Scheduled(fixedRate = 5000)
+    public void scheduledMethod() {
+        System.out.println("Printing from inside scheduledMethod - every 5s");
+    }
+
+    @Scheduled(cron = "5 1")
+    public void scheduledByCron() {
+        System.out.println("Printing from inside scheduledByCron - every 1m, 5s => 65s");
     }
 }
