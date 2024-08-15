@@ -1,10 +1,12 @@
 package application;
 
+import application.events.AddFeatureEvent;
 import application.observer.Observer;
 import framework.annotations.Autowired;
 import framework.annotations.Qualifier;
 import framework.annotations.Scheduled;
 import framework.annotations.Service;
+import framework.events.FrameworkPublisher;
 
 @Service
 public class DemoService {
@@ -13,6 +15,9 @@ public class DemoService {
     Observer observer;
     @Autowired
     private MailProperties mailProperties;
+
+    @Autowired
+    private FrameworkPublisher frameworkPublisher;
 
     @Autowired
     public DemoService(DemoDAO demoDAO) {
@@ -39,5 +44,9 @@ public class DemoService {
     @Scheduled(cron = "5 1")
     public void scheduledByCron() {
         System.out.println("Printing from inside scheduledByCron - every 1m, 5s => 65s");
+    }
+
+    public void publishEvent() {
+        frameworkPublisher.publishEvent(new AddFeatureEvent("New Feature for event was added"));
     }
 }

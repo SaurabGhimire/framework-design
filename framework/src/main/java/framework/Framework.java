@@ -1,13 +1,18 @@
 package framework;
 
 import framework.annotations.*;
+import framework.annotations.EventListener;
+import framework.events.FrameworkPublisher;
 import framework.exceptions.*;
 import framework.scheduled.Scheduling;
 import framework.utils.PropertyAccessor;
+import jdk.jfr.Event;
 import org.apache.logging.log4j.util.Strings;
 import org.reflections.Reflections;
 
 import javax.annotation.Nullable;
+import java.beans.PropertyChangeEvent;
+import java.beans.PropertyChangeListener;
 import java.lang.reflect.*;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -19,11 +24,11 @@ public class Framework {
 
     public static void run(Class<?> mainClass, String... args) throws Exception {
         forwardContext();
-        Object appInstance = mainClass.getDeclaredConstructor().newInstance();
+        Object appInstance = Framework.INSTANCES_MAPPED_BY_TYPE.get(mainClass).toArray()[0];
         if (appInstance instanceof Runnable) {
             ((Runnable) appInstance).run();
         } else {
-            System.out.println("Instance is not RUnnable");
+            System.out.println("Instance is not Runnable");
         }
     }
 
@@ -352,10 +357,28 @@ public class Framework {
 
                     method.setAccessible(true);
                     method.invoke(parentClassInstance, argumentInstances);
+                } else if(hasEventListener(method)){
+                    Parameter[] params = method.getParameters();
+                    Class<?> paramType = params[0].getType();
+                    if(params.length > 1){
+                        throw new ArgumentsNotSupportedException("Event Listener should have only one argument");
+                    }
+                    FrameworkPublisher frameworkPublisher = (FrameworkPublisher)getInstanceFromContextUsingType(FrameworkPublisher.class);
+                    PropertyChangeListener propertyChangeListener = new PropertyChangeListener() {
+                        @Override
+                        public void propertyChange(PropertyChangeEvent propertyChangeEvent) {
+                            try {
+                                method.invoke(parentClassInstance, paramType.cast(propertyChangeEvent.getNewValue()));
+                            } catch (IllegalAccessException | InvocationTargetException e) {
+                                throw new RuntimeException(e);
+                            }
+                        }
+                    };
+                    frameworkPublisher.addPropertyChangeListener(propertyChangeListener);
                 }
             }
         } catch (IllegalArgumentException | IllegalAccessException |
-                 InstanceNotFoundInAppContextException | InvocationTargetException |
+                 InstanceNotFoundInAppContextException | InvocationTargetException | ArgumentsNotSupportedException |
                  MultipleCandidatesForInstanceException e) {
             throw new InstanceCreationWrapperException(e.getMessage(), e);
         }
@@ -376,17 +399,25 @@ public class Framework {
     private static Object getInstanceFromContextUsingType(Class<?> serviceClassType)
             throws InstanceNotFoundInAppContextException, MultipleCandidatesForInstanceException {
 
-        if (Framework.INSTANCES_MAPPED_BY_TYPE.get(serviceClassType).isEmpty()) {
-            throw new InstanceNotFoundInAppContextException(serviceClassType);
-        }
+            if(Framework.INSTANCES_MAPPED_BY_TYPE.get(serviceClassType) == null && serviceClassType == FrameworkPublisher.class){
+                Object instance = new FrameworkPublisher();
+                HashSet<Object> instanceSet = new HashSet<>();
+                instanceSet.add(instance);
+                Framework.INSTANCES_MAPPED_BY_TYPE.put(serviceClassType, instanceSet);
+                return instanceSet.toArray()[0];
+            }
 
-        Set<Object> instanceSet = Framework.INSTANCES_MAPPED_BY_TYPE.get(serviceClassType);
+            if (Framework.INSTANCES_MAPPED_BY_TYPE.get(serviceClassType).isEmpty()) {
+                throw new InstanceNotFoundInAppContextException(serviceClassType);
+            }
 
-        if (instanceSet.size() > 1) {
-            throw new MultipleCandidatesForInstanceException(serviceClassType, instanceSet);
-        }
+            Set<Object> instanceSet = Framework.INSTANCES_MAPPED_BY_TYPE.get(serviceClassType);
 
-        return instanceSet.toArray()[0];
+            if (instanceSet.size() > 1) {
+                throw new MultipleCandidatesForInstanceException(serviceClassType, instanceSet);
+            }
+
+            return instanceSet.toArray()[0];
     }
 
     private static boolean hasServiceAnnotation(Class<?> clazz) {
@@ -403,6 +434,10 @@ public class Framework {
 
     private static boolean hasAutowired(Method field) {
         return field.isAnnotationPresent(Autowired.class);
+    }
+
+    private static boolean hasEventListener(Method method) {
+        return method.isAnnotationPresent(EventListener.class);
     }
 
     private static boolean hasQualifier(Field field) {
