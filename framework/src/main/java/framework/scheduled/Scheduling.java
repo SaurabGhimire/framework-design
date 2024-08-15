@@ -12,6 +12,7 @@ import org.apache.logging.log4j.util.Strings;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.List;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -21,14 +22,14 @@ public class Scheduling {
     private static final int DEFAULT_THREAD_POOL_SIZE = 5;
     private static final ScheduledExecutorService scheduledExecutorService = Executors.newScheduledThreadPool(getThreadPoolSize());
 
-    public static void trigger(List<Class<?>> serviceAnnotatedClasses)
+    public static void trigger(Collection<Class<?>> serviceAnnotatedClasses)
             throws InvalidCronStringFormat, InstanceCreationWrapperException {
         for (Class<?> clazz : serviceAnnotatedClasses) {
             List<Method> scheduledMethods = Arrays.stream(clazz.getDeclaredMethods())
                     .filter(CheckForAnnotation::hasScheduled)
                     .toList();
 
-            Object classInstance = Framework.getInstanceFromAppContext(clazz);
+            Object classInstance = Framework.getInstanceFromAppContext(clazz, true);
 
             scheduleMethods(classInstance, scheduledMethods);
         }
