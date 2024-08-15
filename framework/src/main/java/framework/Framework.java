@@ -1,12 +1,12 @@
 package framework;
 
-import framework.annotations.*;
 import framework.annotations.EventListener;
+import framework.annotations.*;
 import framework.events.FrameworkPublisher;
 import framework.exceptions.*;
 import framework.scheduled.Scheduling;
+import framework.utils.CheckForAnnotation;
 import framework.utils.PropertyAccessor;
-import jdk.jfr.Event;
 import org.apache.logging.log4j.util.Strings;
 import org.reflections.Reflections;
 
@@ -16,6 +16,11 @@ import java.beans.PropertyChangeListener;
 import java.lang.reflect.*;
 import java.util.*;
 import java.util.stream.Collectors;
+
+import static framework.instancecreation.InstanceCreator.createInstanceWithHasArgsConstructor;
+import static framework.instancecreation.InstanceCreator.createInstanceWithNoArgsConstructor;
+import static framework.utils.CheckForAnnotation.hasAutowired;
+import static framework.utils.CheckForAnnotation.hasQualifier;
 
 public class Framework {
     private static final Map<String, Object> INSTANCES_MAPPED_BY_NAME = new HashMap<>();
@@ -63,9 +68,14 @@ public class Framework {
             Constructor<?> constructor = getPreferredConstructor(serviceClassType);
             // if no constructor, skip potential interface
             if (constructor == null) {
+                if (getInstanceFromAppContext(serviceClassType, false) == null) {
+                    // identify implementers and add them to app context
+                    Reflections reflections = new Reflections("application");
+                    Set<? extends Class<?>> subTypes = reflections.getSubTypesOf(serviceClassType);
+                    createInstancesRecursively(filterByActiveProfile(subTypes));
+                }
                 continue;
             }
-
 
             List<? extends Class<?>> paramClasses = validateParameterTypes(serviceClassType,
                     constructor.getParameterTypes(), "constructor");
@@ -225,52 +235,6 @@ public class Framework {
                 || instanceIsAvailableInContextByName(instanceId);
     }
 
-    private static Object createInstanceWithHasArgsConstructor(Class<?> serviceClass, Constructor<?> constructor,
-                                                               List<? extends Class<?>> paramTypes)
-            throws InstanceCreationWrapperException {
-        try {
-            Object[] dependencies = new Object[paramTypes.size()];
-            Parameter[] params = constructor.getParameters();
-            for (int i = 0; i < paramTypes.size(); i++) {
-                Object instance;
-
-                if (hasQualifier(params[i])) {
-                    String instanceId = Framework.getServiceInstanceId(paramTypes.get(i));
-                    instance = Framework.getInstanceFromContextUsingId(instanceId, paramTypes.get(i));
-                } else {
-                    instance = getInstanceFromContextUsingType(paramTypes.get(i));
-                }
-
-                validateIsAssignable(paramTypes.get(i), instance, serviceClass);
-
-                dependencies[i] = instance;
-            }
-
-            return constructor.newInstance(dependencies);
-
-        } catch (InstantiationException | InvocationTargetException |
-                 IllegalAccessException | InstanceNotFoundInAppContextException |
-                 DependencyInstanceMismatchException | MultipleCandidatesForInstanceException e) {
-            throw new InstanceCreationWrapperException(e.getMessage(), e);
-        }
-    }
-
-    private static void validateIsAssignable(Class<?> serviceClass, Object instance, Class<?> parentClass)
-            throws DependencyInstanceMismatchException {
-        if (!serviceClass.isAssignableFrom(instance.getClass())) {
-            throw new DependencyInstanceMismatchException(serviceClass, instance, parentClass);
-        }
-    }
-
-    private static Object createInstanceWithNoArgsConstructor(Class<?> serviceClass) throws InstanceCreationWrapperException {
-        try {
-            return serviceClass.getConstructor().newInstance();
-        } catch (NoSuchMethodException | InstantiationException | InvocationTargetException |
-                 IllegalAccessException e) {
-            throw new InstanceCreationWrapperException(e.getMessage(), e);
-        }
-    }
-
     private static String getClassInstanceIdentifier(Class<?> serviceClass) {
         String className = serviceClass.getSimpleName();
         String[] name = className.split("");
@@ -283,7 +247,7 @@ public class Framework {
         return ANNOTATED_SERVICE_CLASS_TYPES.contains(type);
     }
 
-    private static String getServiceInstanceId(Class<?> clazz) {
+    public static String getServiceInstanceId(Class<?> clazz) {
         String serviceIdentifier;
 
         if (hasServiceAnnotationWithValue(clazz)) {
@@ -305,9 +269,9 @@ public class Framework {
                     Object instance;
                     if (hasQualifier(field)) {
                         String typeInstanceId = field.getAnnotation(Qualifier.class).value();
-                        instance = getInstanceFromContextUsingId(typeInstanceId, fieldType);
+                        instance = getInstanceFromContextUsingId(typeInstanceId, fieldType, true);
                     } else {
-                        instance = getInstanceFromContextUsingType(fieldType);
+                        instance = getInstanceFromContextUsingType(fieldType, true);
                     }
                     field.setAccessible(true);
                     field.set(parentClassInstance, fieldType.cast(instance));
@@ -347,9 +311,9 @@ public class Framework {
 
                         if (hasQualifier(params[i])) {
                             String argumentTypeId = params[i].getAnnotation(Qualifier.class).value();
-                            instance = Framework.getInstanceFromContextUsingId(argumentTypeId, validatedParamTypes.get(i));
+                            instance = Framework.getInstanceFromContextUsingId(argumentTypeId, validatedParamTypes.get(i), true);
                         } else {
-                            instance = Framework.getInstanceFromContextUsingType(validatedParamTypes.get(i));
+                            instance = Framework.getInstanceFromContextUsingType(validatedParamTypes.get(i), true);
                         }
 
                         argumentInstances[i] = instance;
@@ -357,13 +321,13 @@ public class Framework {
 
                     method.setAccessible(true);
                     method.invoke(parentClassInstance, argumentInstances);
-                } else if(hasEventListener(method)){
+                } else if (hasEventListener(method)) {
                     Parameter[] params = method.getParameters();
                     Class<?> paramType = params[0].getType();
-                    if(params.length > 1){
+                    if (params.length > 1) {
                         throw new ArgumentsNotSupportedException("Event Listener should have only one argument");
                     }
-                    FrameworkPublisher frameworkPublisher = (FrameworkPublisher)getInstanceFromContextUsingType(FrameworkPublisher.class);
+                    FrameworkPublisher frameworkPublisher = (FrameworkPublisher) getInstanceFromContextUsingType(FrameworkPublisher.class, true);
                     PropertyChangeListener propertyChangeListener = new PropertyChangeListener() {
                         @Override
                         public void propertyChange(PropertyChangeEvent propertyChangeEvent) {
@@ -388,7 +352,7 @@ public class Framework {
     }
 
 
-    private static Object getInstanceFromContextUsingId(String instanceId, Class<?> serviceClass)
+    public static Object getInstanceFromContextUsingId(String instanceId, Class<?> serviceClass, boolean throwError)
             throws InstanceNotFoundInAppContextException {
 
         if (!Framework.instanceIsAvailableInContextByName(instanceId)) {
@@ -398,52 +362,34 @@ public class Framework {
         return Framework.INSTANCES_MAPPED_BY_NAME.get(instanceId);
     }
 
-    private static Object getInstanceFromContextUsingType(Class<?> serviceClassType)
+    public static Object getInstanceFromContextUsingType(Class<?> serviceClassType, boolean throwError)
             throws InstanceNotFoundInAppContextException, MultipleCandidatesForInstanceException {
 
-            if(Framework.INSTANCES_MAPPED_BY_TYPE.get(serviceClassType) == null && serviceClassType == FrameworkPublisher.class){
-                Object instance = new FrameworkPublisher();
-                HashSet<Object> instanceSet = new HashSet<>();
-                instanceSet.add(instance);
-                Framework.INSTANCES_MAPPED_BY_TYPE.put(serviceClassType, instanceSet);
-                return instanceSet.toArray()[0];
-            }
+        Set<Object> instanceSet = Framework.INSTANCES_MAPPED_BY_TYPE.getOrDefault(serviceClassType, new HashSet<>());
+        if (instanceSet.isEmpty() && serviceClassType == FrameworkPublisher.class) {
+            Object instance = new FrameworkPublisher();
+            HashSet<Object> instances = new HashSet<>();
+            instances.add(instance);
+            Framework.INSTANCES_MAPPED_BY_TYPE.put(serviceClassType, instances);
+            return instances.toArray()[0];
+        }
 
-            if (Framework.INSTANCES_MAPPED_BY_TYPE.get(serviceClassType).isEmpty()) {
-                throw new InstanceNotFoundInAppContextException(serviceClassType);
-            }
 
-            Set<Object> instanceSet = Framework.INSTANCES_MAPPED_BY_TYPE.get(serviceClassType);
+        if (instanceSet.isEmpty() && throwError) {
+            throw new InstanceNotFoundInAppContextException(serviceClassType);
+        } else if (instanceSet.isEmpty()) {
+            return null;
+        }
 
-            if (instanceSet.size() > 1) {
-                throw new MultipleCandidatesForInstanceException(serviceClassType, instanceSet);
-            }
+        if (instanceSet.size() > 1) {
+            throw new MultipleCandidatesForInstanceException(serviceClassType, instanceSet);
+        }
 
-            return instanceSet.toArray()[0];
-    }
-
-    private static boolean hasServiceAnnotation(Class<?> clazz) {
-        return clazz.isAnnotationPresent(Service.class);
-    }
-
-    private static boolean hasQualifier(Parameter param) {
-        return param.isAnnotationPresent(Qualifier.class);
-    }
-
-    private static boolean hasAutowired(Field field) {
-        return field.isAnnotationPresent(Autowired.class);
-    }
-
-    private static boolean hasAutowired(Method field) {
-        return field.isAnnotationPresent(Autowired.class);
+        return instanceSet.toArray()[0];
     }
 
     private static boolean hasEventListener(Method method) {
         return method.isAnnotationPresent(EventListener.class);
-    }
-
-    private static boolean hasQualifier(Field field) {
-        return field.isAnnotationPresent(Qualifier.class);
     }
 
     private static boolean hasValueAnnotation(Field field) {
@@ -460,7 +406,7 @@ public class Framework {
         });
     }
 
-    private static Set<Class<?>> filterByActiveProfile(Collection<Class<?>> theServiceClasses) {
+    private static Set<Class<?>> filterByActiveProfile(Collection<? extends Class<?>> theServiceClasses) {
         return theServiceClasses.stream().filter(theServiceClass -> {
             if (!theServiceClass.isAnnotationPresent(Profile.class)) {
                 return true;
@@ -494,7 +440,7 @@ public class Framework {
                 Framework.INSTANCES_MAPPED_BY_TYPE.put(theConfigurationClass, instanceSet);
             }
         } catch (Exception e) {
-            e.printStackTrace();
+            throw new RuntimeException(e);
         }
     }
 
@@ -508,16 +454,16 @@ public class Framework {
         return superClasses;
     }
 
-    public static Object getInstanceFromAppContext(Class<?> serviceClassType)
+    public static Object getInstanceFromAppContext(Class<?> serviceClassType, boolean throwError)
             throws InstanceCreationWrapperException {
         try {
             Object instance;
 
             if (hasServiceAnnotationWithValue(serviceClassType)) {
                 String instanceId = serviceClassType.getAnnotation(Service.class).value();
-                instance = Framework.getInstanceFromContextUsingId(instanceId, serviceClassType);
+                instance = Framework.getInstanceFromContextUsingId(instanceId, serviceClassType, throwError);
             } else {
-                instance = Framework.getInstanceFromContextUsingType(serviceClassType);
+                instance = Framework.getInstanceFromContextUsingType(serviceClassType, throwError);
             }
 
             return instance;
@@ -557,7 +503,7 @@ public class Framework {
     public static void performDI() throws InstanceCreationWrapperException {
         for (Class<?> serviceClassType : getServiceAnnotatedClasses()) {
 
-            Object parentClassInstance = Framework.getInstanceFromAppContext(serviceClassType);
+            Object parentClassInstance = Framework.getInstanceFromAppContext(serviceClassType, true);
 
             Framework.performFieldInjection(parentClassInstance,
                     serviceClassType.getDeclaredFields());
@@ -567,11 +513,11 @@ public class Framework {
         }
     }
 
-    private static List<Class<?>> getServiceAnnotatedClasses() {
-        return Framework.ANNOTATED_SERVICE_CLASS_TYPES
+    private static Collection<Class<?>> getServiceAnnotatedClasses() {
+        return filterByActiveProfile(Framework.ANNOTATED_SERVICE_CLASS_TYPES
                 .stream()
-                .filter(Framework::hasServiceAnnotation)
-                .toList();
+                .filter(CheckForAnnotation::hasServiceAnnotation)
+                .toList());
     }
 
 }

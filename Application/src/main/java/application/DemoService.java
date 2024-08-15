@@ -3,11 +3,8 @@ package application;
 import application.events.AddFeatureEvent;
 import application.events.SubtractFeatureEvent;
 import application.observer.Observer;
-import framework.annotations.Autowired;
-import framework.annotations.Qualifier;
-import framework.annotations.Scheduled;
-import framework.annotations.Service;
 import framework.events.FrameworkPublisher;
+import framework.annotations.*;
 
 @Service
 public class DemoService {
@@ -35,6 +32,19 @@ public class DemoService {
     public void setObserver(@Qualifier("emailSenderObserver") Observer observer) {
         this.observer = observer;
         System.out.println("Setter injection of observer instance: " + observer);
+
+        // async testing
+        asyncMethod();
+        normalMethod();
+    }
+
+    @Async
+    public void asyncMethod() {
+        System.out.println("Async method running in thread: " + Thread.currentThread().getName());
+    }
+
+    public void normalMethod() {
+        System.out.println("Normal method running in thread: " + Thread.currentThread().getName());
     }
 
    @Scheduled(fixedRate = 5000)
