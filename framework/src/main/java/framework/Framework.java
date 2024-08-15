@@ -368,7 +368,9 @@ public class Framework {
                         @Override
                         public void propertyChange(PropertyChangeEvent propertyChangeEvent) {
                             try {
-                                method.invoke(parentClassInstance, paramType.cast(propertyChangeEvent.getNewValue()));
+                                if (paramType.getSimpleName().equals(propertyChangeEvent.getPropertyName())) {
+                                    method.invoke(parentClassInstance, paramType.cast(propertyChangeEvent.getNewValue()));
+                                }
                             } catch (IllegalAccessException | InvocationTargetException e) {
                                 throw new RuntimeException(e);
                             }
@@ -456,7 +458,6 @@ public class Framework {
             Framework.ANNOTATED_SERVICE_CLASS_TYPES.addAll(filterByActiveProfile(getSuperClasses(type)));
             Framework.ANNOTATED_SERVICE_CLASS_TYPES.addAll(filterByActiveProfile(Arrays.asList(type.getInterfaces())));
         });
-        System.out.println("test");
     }
 
     private static Set<Class<?>> filterByActiveProfile(Collection<Class<?>> theServiceClasses) {

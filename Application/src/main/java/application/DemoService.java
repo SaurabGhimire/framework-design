@@ -1,6 +1,7 @@
 package application;
 
 import application.events.AddFeatureEvent;
+import application.events.SubtractFeatureEvent;
 import application.observer.Observer;
 import framework.annotations.Autowired;
 import framework.annotations.Qualifier;
@@ -36,17 +37,17 @@ public class DemoService {
         System.out.println("Setter injection of observer instance: " + observer);
     }
 
-    @Scheduled(fixedRate = 5000)
+   @Scheduled(fixedRate = 5000)
     public void scheduledMethod() {
         System.out.println("Printing from inside scheduledMethod - every 5s");
     }
 
-    @Scheduled(cron = "5 1")
+   @Scheduled(cron = "5 1")
     public void scheduledByCron() {
         System.out.println("Printing from inside scheduledByCron - every 1m, 5s => 65s");
     }
 
     public void publishEvent() {
-        frameworkPublisher.publishEvent(new AddFeatureEvent("New Feature for event was added"));
+        frameworkPublisher.publishEvent(new SubtractFeatureEvent("New Feature for event was added"));
     }
 }
